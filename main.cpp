@@ -4,6 +4,8 @@
 #include <iomanip>
 #include <random>
 #include <climits>
+#include <thread>
+#include <mutex>
 
 using namespace std;
 
@@ -24,6 +26,24 @@ Result solveSequential(const vector<int>& data) {
     return {s, m};
 }
 
+mutex mtx;
+
+void solveMutexPart(const vector<int>& data, int start, int end, Result& globalRes) {
+    long long localSum = 0;
+    int localMin = INT_MAX;
+
+    for (int i = start; i < end; ++i) {
+        if (data[i] != 0 && data[i] % 13 == 0) {
+            localSum += data[i];
+            if (data[i] < localMin) localMin = data[i];
+        }
+    }
+
+    lock_guard<mutex> lock(mtx);
+    globalRes.sum += localSum;
+    if (localMin < globalRes.min_val) globalRes.min_val = localMin;
+}
+
 void prepareData(vector<int>& data, size_t n) {
     mt19937 gen(42);
     uniform_int_distribution<> dis(1, 1000000);
@@ -31,7 +51,9 @@ void prepareData(vector<int>& data, size_t n) {
 }
 
 int main() {
-    vector<size_t> dimensions = { 10000, 100000, 1000000 };
+    vector<size_t> dimensions = { 100000, 1000000, 10000000 };
+    vector<int> threadCounts = { 2, 4, 8, 16 };
+
     cout << fixed << setprecision(3);
 
     for (size_t n : dimensions) {
@@ -41,9 +63,33 @@ int main() {
         auto s1 = chrono::high_resolution_clock::now();
         Result resSeq = solveSequential(data);
         auto s2 = chrono::high_resolution_clock::now();
-        
         double timeSeq = chrono::duration<double, milli>(s2 - s1).count();
-        cout << "N = " << n << " | Sequential: " << timeSeq << " ms | Sum: " << resSeq.sum << endl;
+
+        cout << "\n>>> N = " << n << " | Sequential: " << timeSeq << " ms" << endl;
+        cout << setw(10) << "Threads" << " | " << setw(15) << "Mutex (ms)" << endl;
+        cout << "-----------|-----------------" << endl;
+
+        for (int tc : threadCounts) {
+            Result resMtx;
+            vector<thread> threads;
+            int chunkSize = n / tc;
+
+            auto m1 = chrono::high_resolution_clock::now();
+            for (int i = 0; i < tc; ++i) {
+                int start = i * chunkSize;
+                int end = (i == tc - 1) ? (int)n : (i + 1) * chunkSize;
+                threads.emplace_back(solveMutexPart, ref(data), start, end, ref(resMtx));
+            }
+
+            for (auto& t : threads) t.join();
+            
+            auto m2 = chrono::high_resolution_clock::now();
+            double timeMtx = chrono::duration<double, milli>(m2 - m1).count();
+
+            cout << setw(10) << tc << " | " << setw(15) << timeMtx << endl;
+        }
+        cout << "-----------------------------" << endl;
     }
+
     return 0;
 }
