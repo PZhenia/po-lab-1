@@ -1,79 +1,49 @@
 #include <iostream>
 #include <vector>
-#include <random>
-#include <thread>
 #include <chrono>
 #include <iomanip>
+#include <random>
+#include <climits>
 
 using namespace std;
 
-void solvePart(vector<double>& matrix, int n, int startRow, int endRow) {
-    for (int i = startRow; i < endRow; ++i) {
-        double rowProduct = 1.0;
-        for (int j = 0; j < n; ++j) {
-            rowProduct *= matrix[i * (size_t)n + j];
+struct Result {
+    long long sum = 0;
+    int min_val = INT_MAX;
+};
+
+Result solveSequential(const vector<int>& data) {
+    long long s = 0;
+    int m = INT_MAX;
+    for (int x : data) {
+        if (x != 0 && x % 13 == 0) {
+            s += x;
+            if (x < m) m = x;
         }
-        matrix[i * (size_t)n + (n - 1 - i)] = rowProduct;
     }
+    return {s, m};
 }
 
-double runParallel(vector<double>& matrix, int n, int numThreads) {
-    vector<thread> threads;
-    threads.reserve(numThreads);
-
-    int rowsPerThread = n / numThreads;
-
-    auto start = chrono::high_resolution_clock::now();
-
-    for (int i = 0; i < numThreads; ++i) {
-        int startRow = i * rowsPerThread;
-        int endRow = (i == numThreads - 1) ? n : (i + 1) * rowsPerThread;
-
-        threads.emplace_back(solvePart, ref(matrix), n, startRow, endRow);
-    }
-
-    for (auto& t : threads) { t.join(); }
-
-    auto end = chrono::high_resolution_clock::now();
-    return chrono::duration<double, milli>(end - start).count();
-}
-
-void prepareData(vector<double>& matrix, int n) {
+void prepareData(vector<int>& data, size_t n) {
     mt19937 gen(42);
-    uniform_real_distribution<> dis(1.0, 3.0);
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            matrix[(size_t)i * n + j] = (j == n - 1 - i) ? 1.0 : dis(gen);
-        }
-    }
+    uniform_int_distribution<> dis(1, 1000000);
+    for (size_t i = 0; i < n; ++i) data[i] = dis(gen);
 }
 
 int main() {
-    vector<int> dimensions = { 100, 1000, 5000, 10000, 20000 };
-    vector<int> threadCounts = { 1, 4, 8, 16, 32, 64, 128, 256 };
+    vector<size_t> dimensions = { 10000, 100000, 1000000 };
+    cout << fixed << setprecision(3);
 
-    cout << fixed << setprecision(4);
-    cout << setw(10) << "N" << " | " << setw(8) << "Threads" << " | " << "Time (ms)" << endl;
-    cout << "-----------|----------|------------" << endl;
+    for (size_t n : dimensions) {
+        vector<int> data(n);
+        prepareData(data, n);
 
-    for (int n : dimensions) {
-        vector<double> matrix((size_t)n * n);
-        prepareData(matrix, n);
-
-        for (int tc : threadCounts) {
-            runParallel(matrix, n, tc);
-
-            double time = runParallel(matrix, n, tc);
-
-            cout << setw(10) << n << " | " << setw(8) << tc << " | " << time << " ms" << endl;
-            
-            volatile double checksum = matrix[0];
-        }
-        cout << "-----------|----------|------------" << endl;
+        auto s1 = chrono::high_resolution_clock::now();
+        Result resSeq = solveSequential(data);
+        auto s2 = chrono::high_resolution_clock::now();
         
-        matrix.clear();
-        matrix.shrink_to_fit();
+        double timeSeq = chrono::duration<double, milli>(s2 - s1).count();
+        cout << "N = " << n << " | Sequential: " << timeSeq << " ms | Sum: " << resSeq.sum << endl;
     }
-
     return 0;
 }
