@@ -13,11 +13,8 @@ using namespace std;
 
 struct Task {
     int id;
-    chrono::steady_clock::time_point creation_time;
     int random_delay; 
-
-    Task(int _id, int _delay) 
-        : id(_id), creation_time(chrono::steady_clock::now()), random_delay(_delay) {}
+    Task(int _id, int _delay) : id(_id), random_delay(_delay) {}
 };
 
 class ThreadPool {
@@ -31,6 +28,8 @@ private:
     condition_variable cv_workers;
     condition_variable cv_scheduler;
     atomic<bool> is_stopped{false};
+    atomic<bool> is_paused{false};
+    bool immediate_stop = false;
 
     void safe_print(const string& msg) {
         lock_guard<mutex> lock(cout_mtx);
@@ -43,9 +42,9 @@ private:
             {
                 unique_lock<mutex> lock(queue_mtx);
                 cv_workers.wait(lock, [this] {
-                    return is_stopped || !execution_queue.empty();
+                    return is_stopped || (!is_paused && !execution_queue.empty());
                 });
-                if (is_stopped && execution_queue.empty()) return;
+                if (is_stopped && (immediate_stop || execution_queue.empty())) return;
                 if (!execution_queue.empty()) {
                     task = new Task(execution_queue.front());
                     execution_queue.pop();
@@ -53,7 +52,7 @@ private:
             }
             if (task) {
                 this_thread::sleep_for(chrono::seconds(task->random_delay));
-                safe_print("[Worker " + to_string(thread_id) + "] completed Task ID: " + to_string(task->id));
+                safe_print("[Worker " + to_string(thread_id) + "] completed Task " + to_string(task->id));
                 delete task;
             }
         }
@@ -62,7 +61,7 @@ private:
     void scheduler_loop() {
         while (!is_stopped) {
             unique_lock<mutex> lock(queue_mtx);
-            cv_scheduler.wait_for(lock, chrono::seconds(10)); 
+            cv_scheduler.wait_for(lock, chrono::seconds(5));
             while (!incoming_queue.empty()) {
                 execution_queue.push(incoming_queue.front());
                 incoming_queue.pop();
@@ -73,9 +72,7 @@ private:
 
 public:
     ThreadPool(int threads_count = 6) {
-        for (int i = 0; i < threads_count; ++i) {
-            workers.emplace_back(&ThreadPool::worker_loop, this, i + 1);
-        }
+        for (int i = 0; i < threads_count; ++i) workers.emplace_back(&ThreadPool::worker_loop, this, i + 1);
         scheduler_thread = thread(&ThreadPool::scheduler_loop, this);
     }
 
@@ -84,7 +81,11 @@ public:
         incoming_queue.push(task);
     }
 
-    ~ThreadPool() {
+    void pause() { is_paused = true; safe_print("Paused"); }
+    void resume() { is_paused = false; cv_workers.notify_all(); safe_print("Resumed"); }
+
+    void stop(bool immediate) {
+        immediate_stop = immediate;
         is_stopped = true;
         cv_scheduler.notify_all();
         cv_workers.notify_all();
@@ -95,9 +96,12 @@ public:
 
 int main() {
     ThreadPool pool(6);
-    for (int i = 1; i <= 15; ++i) {
-        pool.enqueue(Task(i, 2));
+    string cmd;
+    while (cin >> cmd) {
+        if (cmd == "pause") pool.pause();
+        else if (cmd == "resume") pool.resume();
+        else if (cmd == "stop") { pool.stop(false); break; }
+        else pool.enqueue(Task(rand()%100, 2));
     }
-    this_thread::sleep_for(chrono::seconds(30));
     return 0;
 }
