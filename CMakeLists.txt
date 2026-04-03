@@ -1,5 +1,12 @@
-cmake_minimum_required(VERSION 3.10.0)
-project(lab1 VERSION 0.1.0 LANGUAGES C CXX)
+cmake_minimum_required(VERSION 3.10)
+project(MatrixSocketLab)
 
-add_executable(lab1 main.cpp)
+set(CMAKE_CXX_STANDARD 17)
 
+add_executable(server_app Server/main.cpp)
+add_executable(client_app Client/main.cpp)
+
+if(WIN32)
+    target_link_libraries(server_app ws2_32)
+    target_link_libraries(client_app ws2_32)
+endif()
