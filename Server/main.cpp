@@ -1,7 +1,7 @@
 #include <thread>
 #include <map>
 #include <mutex>
-#include "../config.h" 
+#include "../config.h"
 
 #pragma comment(lib, "ws2_32.lib")
 using namespace std;
@@ -101,6 +101,7 @@ void handleClient(SOCKET clientSocket) {
     lock_guard<mutex> lock(clientsMutex);
     clients.erase(clientSocket);
     closesocket(clientSocket);
+    cout << "[SERVER] Client disconnected." << endl;
 }
 
 int main() {
