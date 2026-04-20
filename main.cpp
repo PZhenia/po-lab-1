@@ -1,79 +1,113 @@
 #include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
 #include <vector>
-#include <random>
 #include <thread>
-#include <chrono>
-#include <iomanip>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 
-using namespace std;
+#pragma comment(lib, "ws2_32.lib")
 
-void solvePart(vector<double>& matrix, int n, int startRow, int endRow) {
-    for (int i = startRow; i < endRow; ++i) {
-        double rowProduct = 1.0;
-        for (int j = 0; j < n; ++j) {
-            rowProduct *= matrix[i * (size_t)n + j];
-        }
-        matrix[i * (size_t)n + (n - 1 - i)] = rowProduct;
-    }
+#define PORT 8080
+#define BUFFER_SIZE 1024
+
+std::string readFile(const std::string& fileName) {
+    std::ifstream file(fileName, std::ios::binary);
+    if (!file.is_open()) return "";
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
 }
 
-double runParallel(vector<double>& matrix, int n, int numThreads) {
-    vector<thread> threads;
-    threads.reserve(numThreads);
-
-    int rowsPerThread = n / numThreads;
-
-    auto start = chrono::high_resolution_clock::now();
-
-    for (int i = 0; i < numThreads; ++i) {
-        int startRow = i * rowsPerThread;
-        int endRow = (i == numThreads - 1) ? n : (i + 1) * rowsPerThread;
-
-        threads.emplace_back(solvePart, ref(matrix), n, startRow, endRow);
-    }
-
-    for (auto& t : threads) { t.join(); }
-
-    auto end = chrono::high_resolution_clock::now();
-    return chrono::duration<double, milli>(end - start).count();
-}
-
-void prepareData(vector<double>& matrix, int n) {
-    mt19937 gen(42);
-    uniform_real_distribution<> dis(1.0, 3.0);
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            matrix[(size_t)i * n + j] = (j == n - 1 - i) ? 1.0 : dis(gen);
+void handleRequest(SOCKET clientSocket) {
+    char buffer[BUFFER_SIZE] = { 0 };
+    int bytesRead = recv(clientSocket, buffer, BUFFER_SIZE, 0);
+    
+    if (bytesRead > 0) {
+        std::string request(buffer);
+        size_t firstLineEnd = request.find("\n");
+        if (firstLineEnd != std::string::npos) {
+            std::cout << "Request: " << request.substr(0, firstLineEnd) << std::endl;
         }
+
+        std::istringstream iss(request);
+        std::string method, path, protocol;
+        iss >> method >> path >> protocol;
+
+        if (path == "/") path = "/index.html";
+        std::string fileName = path.substr(1);
+
+        std::string content = readFile(fileName);
+        std::string response;
+
+        if (!content.empty()) {
+            response = "HTTP/1.1 200 OK\r\n";
+            response += "Content-Type: text/html\r\n";
+            response += "Content-Length: " + std::to_string(content.size()) + "\r\n";
+            response += "Connection: close\r\n\r\n";
+            response += content;
+        } else {
+            std::string errorMsg = "<h1>404 Not Found</h1>";
+            response = "HTTP/1.1 404 Not Found\r\n";
+            response += "Content-Type: text/html\r\n";
+            response += "Content-Length: " + std::to_string(errorMsg.size()) + "\r\n";
+            response += "Connection: close\r\n\r\n";
+            response += errorMsg;
+        }
+
+        send(clientSocket, response.c_str(), (int)response.size(), 0);
     }
+
+    closesocket(clientSocket);
 }
 
 int main() {
-    vector<int> dimensions = { 100, 1000, 5000, 10000, 20000 };
-    vector<int> threadCounts = { 1, 4, 8, 16, 32, 64, 128, 256 };
-
-    cout << fixed << setprecision(4);
-    cout << setw(10) << "N" << " | " << setw(8) << "Threads" << " | " << "Time (ms)" << endl;
-    cout << "-----------|----------|------------" << endl;
-
-    for (int n : dimensions) {
-        vector<double> matrix((size_t)n * n);
-        prepareData(matrix, n);
-
-        for (int tc : threadCounts) {
-            runParallel(matrix, n, tc);
-
-            double time = runParallel(matrix, n, tc);
-
-            cout << setw(10) << n << " | " << setw(8) << tc << " | " << time << " ms" << endl;
-            
-            volatile double checksum = matrix[0];
-        }
-        cout << "-----------|----------|------------" << endl;
-        
-        matrix.clear();
-        matrix.shrink_to_fit();
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::cerr << "WSAStartup failed" << std::endl;
+        return 1;
     }
 
+    SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverSocket == INVALID_SOCKET) {
+        std::cerr << "Socket creation failed" << std::endl;
+        WSACleanup();
+        return 1;
+    }
+
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    serverAddr.sin_port = htons(PORT);
+
+    if (bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        std::cerr << "Bind failed" << std::endl;
+        closesocket(serverSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    if (listen(serverSocket, SOMAXCONN) == SOCKET_ERROR) {
+        std::cerr << "Listen failed" << std::endl;
+        closesocket(serverSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    std::cout << "Server started on port " << PORT << "..." << std::endl;
+
+    while (true) {
+        sockaddr_in clientAddr;
+        int clientAddrLen = sizeof(clientAddr);
+        SOCKET clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &clientAddrLen);
+
+        if (clientSocket != INVALID_SOCKET) {
+            std::thread(handleRequest, clientSocket).detach();
+        }
+    }
+
+    closesocket(serverSocket);
+    WSACleanup();
     return 0;
 }
