@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <thread>
+#include <chrono>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
@@ -26,11 +27,6 @@ void handleRequest(SOCKET clientSocket) {
     
     if (bytesRead > 0) {
         std::string request(buffer);
-        size_t firstLineEnd = request.find("\n");
-        if (firstLineEnd != std::string::npos) {
-            std::cout << "Request: " << request.substr(0, firstLineEnd) << std::endl;
-        }
-
         std::istringstream iss(request);
         std::string method, path, protocol;
         iss >> method >> path >> protocol;
@@ -57,6 +53,9 @@ void handleRequest(SOCKET clientSocket) {
         }
 
         send(clientSocket, response.c_str(), (int)response.size(), 0);
+        
+        shutdown(clientSocket, SD_SEND);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     closesocket(clientSocket);
@@ -65,13 +64,11 @@ void handleRequest(SOCKET clientSocket) {
 int main() {
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        std::cerr << "WSAStartup failed" << std::endl;
         return 1;
     }
 
     SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (serverSocket == INVALID_SOCKET) {
-        std::cerr << "Socket creation failed" << std::endl;
         WSACleanup();
         return 1;
     }
@@ -82,20 +79,18 @@ int main() {
     serverAddr.sin_port = htons(PORT);
 
     if (bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
-        std::cerr << "Bind failed" << std::endl;
         closesocket(serverSocket);
         WSACleanup();
         return 1;
     }
 
     if (listen(serverSocket, SOMAXCONN) == SOCKET_ERROR) {
-        std::cerr << "Listen failed" << std::endl;
         closesocket(serverSocket);
         WSACleanup();
         return 1;
     }
 
-    std::cout << "Server started on port " << PORT << "..." << std::endl;
+    std::cout << "Server started on http://localhost:" << PORT << std::endl;
 
     while (true) {
         sockaddr_in clientAddr;
